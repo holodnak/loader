@@ -81,7 +81,6 @@ main:
 	;;setup arrow sprite, perform sprite dma, then draw first page of disk list
 	jsr 	movearrow
 	jsr		spritedma
-;	jsr		drawpage
 	jsr		movepage
 
 	;;enable nmi interrupts
@@ -151,6 +150,9 @@ drawpage:
 	jsr clearpage
 
 	;;calculate starting line of this page (multiply page number by 23)
+	lda #0
+	sta num1+1
+	sta num2+1
 	lda curpage
 	sta num1
 	lda #23
@@ -178,12 +180,6 @@ drawpage:
 	lda res+1
 	sta listaddr+1
 
-	;;add starting offset of $8000
-;	lda listaddr+1
-;	clc
-;	adc #$80
-;	sta listaddr+1
-
 	;;first entry in disklist is just the number of disks, bump up by one page
 	jsr inclistaddr
 
@@ -191,14 +187,6 @@ drawpage:
 	ldy	PPUSTATUS			;;reset the toggle
 	ldsty	$20,PPUADDR			;;high byte of destination address
 	ldsty	$A3,PPUADDR			;;low byte of destination address
-
-	;;setup pointer to first game in list
-;	ldsty	>(DISKLIST+32),$A1	;;high byte of source address
-;	ldsty	<(DISKLIST+32),$A0	;;low byte of source address
-
-;;;;;;;;;;;;;;;;;;
-
-;;;;;;;;;;;;;;;;;;;;
 
 	;;reset temp disk count on screen variable
 	lda #0
@@ -306,14 +294,7 @@ startdisk:
 	ldsty	>(DISKLIST+0),listaddr+1	;;high byte of source address
 	ldsty	<(DISKLIST+40),listaddr+0	;;low byte of source address
 
-	;;hack to boot item 0 on page 0
-;	cmp #0
-;	beq +
-
 	;;increment the address pointer enough to get to the selected disk
-;-	jsr	inclistaddr
-;	dec	curdisk
-;	bne	-
 decloop:
 	lda 	curdisk+0
 	bne 	+
@@ -373,6 +354,29 @@ writefilename:
 .define decThousands		$44
 .define decTenThousands		$43
 
+hextodecbuild:
+	lda 	$7027
+	ldx 	$7026
+	jsr 	HexToDec65535
+	sta.w 	decTens
+	sty.w 	decHundreds
+
+	;;initialize loop to copy 5 bytes
+	ldx 	#0
+-	lda 	$43,x
+
+	;;check if this digit is leading zero, if so write a space instead
+	cmp 	#$30
+	bne 	+
+	lda 	#$20
+	sta 	$43,x
+
+	;;go to next character and increment loop counter
+	inx
+	cpx 	#5
+	bne 	-
++	rts
+
 checkstatus:
 	lda 	#$24
 	sta 	$58
@@ -394,44 +398,44 @@ checkstatus:
 
 +	rts
 
-statusbox:
+buildbox:
+	jsr 	hextodecbuild
 
-	lda 	$7027
-	ldx 	$7026
-	jsr 	HexToDec65535
-	sta.w 	decTens
-	sty.w 	decHundreds
-
-
+	;;initialize loop to copy 5 bytes
 	ldx 	#0
-	ldy 	#5
+	stx 	ok_button
+	stx 	cancel_button
 -	lda 	$43,x
-	cmp 	#$30
-	bne 	+
-	lda 	#$20
-	sta 	$43,x
+	sta.w 	box_build_blank,x
 	inx
-	dey
-	bne 	-
-+
+	cpx 	#5
+	bne -
 
+	ldsty	>(box_build),$53	;;high byte of source address
+	ldsty	<(box_build),$52	;;low byte of source address
+
+	jmp 	finishbox
+
+statusbox:
+	jsr 	hextodecbuild
+
+	;;initialize loop to copy 5 bytes
 	ldx 	#0
-	ldy 	#5
+	stx 	ok_button
+	stx 	cancel_button
 -	lda 	$43,x
 	sta.w 	box_status_blank,x
 	inx
-	dey
+	cpx 	#5
 	bne -
-
-	lda #0
-	sta ok_button
-	sta cancel_button
-	jsr drawbox
 
 	ldsty	>(box_status),$53	;;high byte of source address
 	ldsty	<(box_status),$52	;;low byte of source address
 
-	jsr copyboxstring
+finishbox:
+
+	jsr 	drawbox
+	jsr 	copyboxstring
 
 boxloop2:
 	inc	sleeping
@@ -539,12 +543,29 @@ drawbox:
 	ldsty	$21,PPUADDR		;;setup destination ppu address
 	ldsty	$04,PPUADDR
 
-	ldsty	>(box),$51	;;high byte of source address
-	ldsty	<(box),$50	;;low byte of source address
+	ldsty	>(box_top),$51	;;high byte of source address
+	ldsty	<(box_top),$50	;;low byte of source address
+	jsr 	copyboxline
 
-	lda 	#7
+	lda 	#5
 	sta 	$54
-copybox:
+
+-	ldsty	>(box_line),$51	;;high byte of source address
+	ldsty	<(box_line),$50	;;low byte of source address
+	jsr 	copyboxline
+
+	dec 	$54
+	bne 	-
+
+	ldsty	>(box_bottom),$51	;;high byte of source address
+	ldsty	<(box_bottom),$50	;;low byte of source address
+	jsr 	copyboxline
+
+	rts
+
+;;copy entire box line and position the vramaddr to start of next line
+;;address of box data is stored at $50 (16bit ptr)
+copyboxline:
 	ldy 	#0
 	ldx		#24
 
@@ -560,18 +581,6 @@ copybox:
 -	lda 	PPUDATA
 	dex
 	bne 	-
-
-	;;increment source address
-	clc
-	lda 	$50
-	adc		#24
-	sta 	$50
-	bcc 	+
-	inc 	$51
-
-	;;decrement loop counter
-+	dec 	$54
-	bne 	copybox
 
 	rts
 
@@ -621,13 +630,8 @@ copymore:
 
 ;; 168 bytes
 box_top:
-box:
 	.db $11,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$12
 box_line:
-	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
-	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
-	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
-	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
 	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
 box_bottom:
 	.db $15,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$16
@@ -636,18 +640,28 @@ box_updatefirmware:
 	.db "Update firmware?",0
 	.db 0
 	.db 0
-	.db "          A: Continue",0
-	.db "          B: Cancel",0
+	.db "A: Continue",0
+	.db "B: Cancel",0
 	.db $ff
 
 box_status:
-	.db "Firmware updated to",0
+	.db "Firmware is now at",0
 	.db "build number: "
 box_status_blank:
 	.db 0,0,0,0,0,0
 	.db 0
 	.db 0
-	.db "          A: Continue",0
+	.db "A: Continue",0
+	.db $ff
+
+box_build:
+	.db "Firmware build: "
+box_build_blank:
+	.db 0,0,0,0,0,0
+	.db 0
+	.db 0
+	.db 0
+	.db "A: Continue",0
 	.db $ff
 
 diskid:
@@ -655,7 +669,7 @@ diskid:
 
 ;;identification string followed by version
 ident:
-	.db	"]|<=--LOADER.FDS--=>|[",0
+	.db	"]|LOADER.FDS|[",0
 	.db	030
 
 ;;calculate number of pages

@@ -30,19 +30,55 @@ skip:
 	rts
 
 ;;result stored in A=hi, X=lo
+;mul16:
+;	lda #$00
+;	ldx #$08
+;	clc
+;-	bcc +
+;	clc
+;	adc num2
+;+	ror
+;	ror num1
+;	dex
+;	bpl -
+;	ldx num1
+;	rts
+
+;multiplier = $f7 
+;multiplicand = $f9 
+;product = $fb 
+
 mul16:
 	lda #$00
-	ldx #$08
-	clc
--	bcc +
+	sta res+2 ; clear upper bits of product
+	sta res+3 
+	ldx #$10 ; set binary count to 16 
+shift_r:
+	lsr num1+1 ; divide multiplier by 2 
+	ror num1
+	bcc rotate_r 
+	lda res+2 ; get upper half of product and add multiplicand
 	clc
 	adc num2
-+	ror
-	ror num1
+	sta res+2
+	lda res+3 
+	adc num2+1
+rotate_r:
+	ror ; rotate partial product 
+	sta res+3 
+	ror res+2
+	ror res+1 
+	ror res 
 	dex
-	bpl -
-	ldx num1
+	bne shift_r
+	lda res+1
+	ldx res+0
 	rts
+
+
+
+
+
 
 ; 16-bit addition and subtraction by FMan/Tropyx
 sub16:

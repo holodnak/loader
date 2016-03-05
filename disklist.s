@@ -12,7 +12,7 @@
 .ENDRO
 
 .org $0000
-.dw  260
+.dw  361
 .org $24
 .db $db
 .db $dc

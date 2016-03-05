@@ -61,6 +61,10 @@ parseinput:
 	bne +
 	jmp	updatefirmware	;;update the firmware
 
++	cmp #$34
+	bne +
+	jmp	buildbox		;;show firmware build
+
 +	lda	PADDATA			;;load controller data
 	and	#$04			;;mask off down
 	beq	+				;;if 0, then branch
@@ -148,6 +152,9 @@ movearrow:
 
 	;;get disk index offset from current page
 	;;perform multiply of page number -> starting game index
+	lda 	#0
+	sta 	num1+1
+	sta 	num2+1
 	lda 	curpage
 	sta 	num1
 	lda 	#23
@@ -177,6 +184,8 @@ movepage:
 
 	;;reset line to 0
 	lda 	#0
+	sta 	num1+1
+	sta 	num2+1
 	sta 	curline
 
 	;;calculate number of lines on this page

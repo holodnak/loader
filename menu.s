@@ -1,5 +1,5 @@
 .MEMORYMAP
-	SLOTSIZE $1000
+	SLOTSIZE $800
 	DEFAULTSLOT 0
 	SLOT 0 $6000
 
@@ -7,7 +7,7 @@
 
 .ROMBANKMAP
 	BANKSTOTAL 1
-	BANKSIZE $1000
+	BANKSIZE $800
 	BANKS 1
 .ENDRO
 
@@ -19,7 +19,8 @@
 ;;sprite data
 .ORG $0000
 sprites:
-.repeat 64
+	.db	$FF,$19,$83,$10
+.repeat 63
 	.db	$FF,$FF,$FF,$FF
 .endr
 
@@ -29,197 +30,159 @@ irq:
 	rti
 
 ;;nmi vector
-.ORG $0200
+.ORG $0101
 nmi:
 	pha
-;	pushregs					;;save registers
-
 	lda	#0
 	sta	sleeping
-	
-;	popregs
 	pla
 	rti
 
 ;;reset vector
-.ORG $0400
+.ORG $0110
 reset:
-
-	;;continue booting with kyodoku bypass
-	sei
-	ldx	#$FF
-	txs
-	lda	#$10
-	sta	$2000
-	lda	#$06
-	sta	$2001
-	lda	$FA
-	ora	#$08
-	sta	$4025
-	sta	$FA
-	lda	$0102
-	ldx	$0103
-	cmp	#$35
-	bne	main
-	cpx	#$53
-	bne	main
-	lda	#$00
-	sta	$0102
-	jmp	($FFFC)
 
 main:
 
+	;;setup stack
 	ldx	#$FF
-	txs					;;setup stack
-	inx
-	txa
--	sta	$000,x			;;clear ram
-	sta	$100,x
-	sta	$200,x
-	sta	$300,x
-	sta	$400,x
-	sta	$500,x
-	sta	$600,x
-	sta	$700,x
-	inx
-	bne	-
-	
+	txs
+
 	;;perform initialization of the nes
 	ldsty	$40,$4017		;;disable frame irq
 	ldsty	$0F,$4015		;;setup volume
-	ldx	#0
-	stx.w	PPUCTRL			;;disable nmi
-	stx.w	PPUMASK			;;disable rendering
-	stx.w	$4010				;;disable dmc irq
-	lda	#0
-	sta	PPUCTRL
-	sta	PPUMASK
 
-	lda	#$C0
-	sta	$0101
-	sta	$0100
-	ldx	#2
+	;;init reset action
+	lda		#$C0
+	sta		$0101
+	sta		$0100
+
+	lda		#0
+	sta		PPUCTRL			;;disable nmi
+	sta		PPUMASK			;;disable rendering
+	sta		$4010			;;disable dmc irq
 
 	;;init local variables
-	lda	#0
-	sta	curline
-	sta	curdisk
-	sta	curpage
-	sta pagecount
-	lda	DISKLIST
-	cmp	#0
-	beq	+
-	sta	diskcount
-	dec	diskcount
-+
-
-	;;calculate number of pages (pagecount is number of pages + 1)
-	lda diskcount
--	inc pagecount
-	sec
-	sbc #23
-	bpl -
-	dec pagecount
+	sta		curline
+	sta		curpage
+	sta		curdisk+0
+	sta		curdisk+1
 
 	;;initialize pad data
-	lda	#$00
-	sta	PADDATA
-	sta	PADDATA2
+	sta		PADDATA
+	sta		PADDATA2
 
 	;;copy palette
-	jsr	copypalette
-	
-	;;setup arrow sprite
-	lda	#$19
-	sta	SPRITES+1
-	lda	#$83
-	sta	SPRITES+2
-	lda	#16
-	sta	SPRITES+3
-	jsr movearrow
-	
-	;;init sprites
-	jsr	spritedma
+	jsr		copypalette
 
-	;;draw initial page of games
-	jsr	drawpage
+	;;calculate number of pages
+	jsr 	calcnumpages
 
-	ldsty	$18,PPUMASK		;;enable bg/sprites
+	;;setup arrow sprite, perform sprite dma, then draw first page of disk list
+	jsr 	movearrow
+	jsr		spritedma
+;	jsr		drawpage
+	jsr		movepage
 
-	lda	#%10000000   ; enable NMI interrupts now that the PPU is ready
-	sta	PPUCTRL
+	;;enable nmi interrupts
+	lda 	#$80
+	sta 	PPUCTRL
 
-	jmp	loop
+	jsr 	checkstatus
 
 loop:
 
-	inc	sleeping
--	lda	sleeping
+	inc		sleeping
+-	lda		sleeping
 	bne	-
- 
-	jsr	spritedma
 
-	jsr	readinput
+	;;reset scroll
+	lda 	#0
+	sta 	PPUSCROLL
+	sta 	PPUSCROLL
 
-	ldsty	$00,PPUSCROLL	;;reset scroll to 0,0
-	ldsty	$00,PPUSCROLL
- 
-	jmp	loop
+	;;enable rendering
+	lda 	#$18
+	sta 	PPUMASK
 
-multable:
-	.db	0, 23, 46, 69, 92, 115, 138, 161, 184, 207, 230, 253
+	jsr		spritedma
+	jsr		readinput
+	jsr		parseinput
 
-.org $0600
+	jmp		loop
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+clearpage:
+	ldsty	$00,PPUMASK		;;disable bg/sprites
+
+	ldy	PPUSTATUS			;;reset the toggle
+	ldsty	$20,PPUADDR		;;setup destination ppu address
+	ldsty	$A2,PPUADDR
+
+	lda 	#23
+	sta 	$54
+
+--	lda 	#$10
+	ldx		#28
+
+	;;clear line of the box
+-	sta 	PPUDATA
+	iny
+	dex
+	bne 	-
+
+	;;move to beginning of next column used for box
+	ldx 	#4
+-	lda 	PPUDATA
+	dex
+	bne 	-
+
+	;;decrement loop counter
++	dec 	$54
+	bne 	--
+
+	rts
+
 ;;draw page of games, variable curpage holds current page number
 drawpage:
 
 	;;first, clear the old tiles in the nametable
-;	jsr clearpage
+	jsr clearpage
 
-	;;calculate number of lines on this page
+	;;calculate starting line of this page (multiply page number by 23)
 	lda curpage
-
-	;;perform table multiply of page number -> starting game index
-	tax
-	lda	multable.w, x
-
-	;;save result to temp mem
-	sta $60
-
-	;;load number of disks total in the list
-	lda DISKLIST
-
-	;;subtract to find number of games on screen
-	sec
-	sbc $60
-
-	;;if result is 23 or greater, then display max lines, else display the result number of lines
-	cmp #23
-	bmi +
+	sta num1
 	lda #23
-+	sta maxline
-	dec maxline
-	
-	;;get starting entry index and store it in listaddr var
+	sta num2
+	jsr mul16
 
-	;;current page*23 is stored in $60
-	lda $60
-	sta listaddr+0
+	sta num1+1
+	stx num1+0
+	lda #40
+	sta num2+0
 	lda #0
-	sta listaddr+1
+	sta num2+1
+	jsr	mul16
 
-	;;multiply by 32
-	ldx #5
--	asl listaddr+0
-	rol listaddr+1
-	dex
-	bne -
+	sta num1+1
+	stx num1+0
+	lda #$70
+	sta num2+1
+	lda #0
+	sta num2+0
+	jsr add16
+
+	lda res+0
+	sta listaddr+0
+	lda res+1
+	sta listaddr+1
 
 	;;add starting offset of $8000
-	lda listaddr+1
-	clc
-	adc #$80
-	sta listaddr+1
+;	lda listaddr+1
+;	clc
+;	adc #$80
+;	sta listaddr+1
 
 	;;first entry in disklist is just the number of disks, bump up by one page
 	jsr inclistaddr
@@ -241,8 +204,12 @@ drawpage:
 	lda #0
 	sta $62
 
+	lda maxline
+	sta $61
+	inc $61
+
 	;;load total number of games and save to temp mem byte
-	lda	DISKLIST
+	lda	#23
 	sta $60
 
 	;;now start assembling the list, number of disks in list is stored in a
@@ -260,7 +227,7 @@ copy:
 
 	inc $62
 	lda $62
-	cmp #23
+	cmp $61
 	beq copydone
 
 	;;decrement the counter
@@ -271,45 +238,10 @@ copy:
 copydone:
 	rts
 
-;;;;;;;;;;;;working;;;;;;;;;;;;;;;
-	;;if total number of games is 0, bail
-	cmp	#0
-	bne	+
-	rts
-
-	;;save game count in temp var
-+	sta	$60
-
-	;;keep copying disk names until there is no more
--	jsr	copystring
-	jsr	inclistaddr
-	dec	$60
-	bne	-
-
-	rts
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-	;;setup number of games listed per page
-	lda	$8000					;;load total number of games
-	cmp	#23
-	bcc	+						;;branch if total number of games is less than 23
-;;games is greater than 23
-	lda	#23
-;;games less than 23 (draw partial page)
-+	sta	$60
-
-	;;keep copying
--	jsr	copystring
-	dec	$60
-	bne	-
-
-end:
-	rts
-
 inclistaddr:
 	clc
 	lda listaddr+0
-	adc #32
+	adc #40
 	sta listaddr+0
 	bcc +
 	inc listaddr+1
@@ -349,7 +281,7 @@ ppuwait:
 ;;copy string from ($80) to ppu memory
 copystring:
 	ldx	#28
-	ldy	#1
+	ldy	#12
 -	lda	(listaddr),y
 	dex
 	iny
@@ -369,167 +301,354 @@ copystring:
 	lda	PPUDATA
 	rts
 
-;;read input and deal with button presses
-readinput:
-	ldsty	1,$4016			;;strobe controllers
-	ldsty	0,$4016
-	lda	#0
-	sta	PADDATA
-	ldx	#8
--	lda	$4016
-	lsr	a
-	rol	PADDATA
-	dex
-	bne	-
-
-	lda	PADDATA
-	tay
-	eor	PADDATA2
-	and	PADDATA
-	sta	PADDATA
-	sty.w	PADDATA2
-
-	lda	PADDATA			;;load controller data
-	and	#$04				;;mask off down
-	beq	+					;;if 0, then branch
-	jsr	nextdisk			;;go to next disk
-
-+	lda	PADDATA			;;load controller data
-	and	#$08				;;mask off up
-	beq	+
-	jsr	prevdisk			;;go to previous disk
-
-+	lda	PADDATA			;;load controller data
-	and	#$01				;;mask off right
-	beq	+
-	jsr	nextpage			;;go to next page
-
-+	lda	PADDATA			;;load controller data
-	and	#$02				;;mask off left
-	beq	+
-	jsr prevpage			;;go to previous page
-
-+	lda	PADDATA			;;load controller data
-	and	#$80				;;mask off a button
-	beq	+
-	jsr	startdisk		;;start game
-
-	rts
-
-;;move down in the list
-nextdisk:
-	lda	curline
-	cmp maxline
-	beq	+
-	inc	curline
-	jsr	movearrow
-+	rts
-
-;;go up in the list
-prevdisk:
-	lda	curline
-	cmp	#0
-	beq	+
-	dec	curline
-	jsr	movearrow
-+	rts
-
-nextpage:
-	lda curpage
-	cmp pagecount
-	beq +
-	inc curpage
-	jsr movepage
-+	rts
-
-prevpage:
-	lda curpage
-	cmp #0
-	beq +
-	dec curpage
-	jsr movepage
-+	rts
-
-;;move the disk selection cursor
-movearrow:
-	lda	curline
-	asl
-	asl
-	asl
-	clc
-	adc	#39
-	sta	SPRITES+0
-	rts
-
-;;change the page
-movepage:
-
-	;;reset line to 0
-	lda #0
-	sta curline
-
-	;;calculate number of lines on this page
-	lda curpage
-
-	;;perform table multiply of page number -> starting game index
-	tax
-	lda	multable.w, x
-
-	;;save result to temp mem
-	sta $60
-
-	;;load number of disks total in the list
-	lda DISKLIST
-
-	;;subtract to find number of games on screen
-	sec
-	sbc $60
-
-	;;if result is 23 or greater, then display max lines, else display the result number of lines
-	cmp #23
-	bmi +
-	lda #23
-+	sta maxline
-	dec maxline
-
-	jsr movearrow
-
-	ldsty	$00,PPUMASK		;;disable bg/sprites
-
-	jsr drawpage
-
-	ldsty	$18,PPUMASK		;;enable bg/sprites
-
-	rts
-
 startdisk:
 	;;setup pointer to disk list data
-	ldsty	>(DISKLIST),listaddr+1	;;high byte of source address
-	ldsty	<(DISKLIST),listaddr+0	;;low byte of source address
+	ldsty	>(DISKLIST+0),listaddr+1	;;high byte of source address
+	ldsty	<(DISKLIST+40),listaddr+0	;;low byte of source address
 
-	;;calculate the disk number
-	lda curpage
-	tax
-	lda	multable.w, x
-	clc
-	adc curline
-	sta curdisk
+	;;hack to boot item 0 on page 0
+;	cmp #0
+;	beq +
 
 	;;increment the address pointer enough to get to the selected disk
--	jsr	inclistaddr
-	dec	curdisk
-	bpl	-
+;-	jsr	inclistaddr
+;	dec	curdisk
+;	bne	-
+decloop:
+	lda 	curdisk+0
+	bne 	+
+	lda 	curdisk+1
+	beq 	done
+	dec 	curdisk+1
++	dec 	curdisk+0
+	jsr		inclistaddr
+	jmp 	decloop
+done:
 
 	;;load the disk index and begin to boot the game
 +	ldy	#0
-	lda	(listaddr),y
-	jsr	SETFILECOUNT
-	.dw	diskid
 
+	jsr writefilename
+
+reboot:
 	;;tell bios to reboot
 	lda	#0
 	sta	$102
 	jmp	($FFFC)
+
+writefilename:
+	lda $0101				;;save irq handler action
+	pha
+
+	lda #2					;;error retry count
+	sta $05
+
+	jsr STARTXFER
+	lda #$DB 				;;block "type"
+	jsr WRITEBLOCKTYPE
+
+	;;setup to copy 12 byte filename
+	ldy #0
+	lda #12
+	sta $80
+
+	;;filename write loop
+-	lda (listaddr),y
+	jsr XFERBYTE			;;write it out
+	iny
+	dec $80
+	bne -
+
+	jsr ENDBLOCKWRITE
+
+	pla 					;;restore irq handler action
+	sta $0101
+	RTS
+
+;;check status area of disklist for firmware update display
+
+.define decOnes				$47
+.define decTens				$46
+.define decHundreds			$45
+.define decThousands		$44
+.define decTenThousands		$43
+
+checkstatus:
+	lda 	#$24
+	sta 	$58
+	lda 	#$70
+	sta 	$59
+	ldy 	#0
+
+	lda 	($58),y
+	cmp 	#$DB
+	bne 	+
+
+	iny
+	lda 	($58),y
+	cmp 	#$DC
+	bne 	+
+
+	;;display box
+	jmp 	statusbox
+
++	rts
+
+statusbox:
+
+	lda 	$7027
+	ldx 	$7026
+	jsr 	HexToDec65535
+	sta.w 	decTens
+	sty.w 	decHundreds
+
+
+	ldx 	#0
+	ldy 	#5
+-	lda 	$43,x
+	cmp 	#$30
+	bne 	+
+	lda 	#$20
+	sta 	$43,x
+	inx
+	dey
+	bne 	-
++
+
+	ldx 	#0
+	ldy 	#5
+-	lda 	$43,x
+	sta.w 	box_status_blank,x
+	inx
+	dey
+	bne -
+
+	lda #0
+	sta ok_button
+	sta cancel_button
+	jsr drawbox
+
+	ldsty	>(box_status),$53	;;high byte of source address
+	ldsty	<(box_status),$52	;;low byte of source address
+
+	jsr copyboxstring
+
+boxloop2:
+	inc	sleeping
+-	lda	sleeping
+	bne	-
+ 
+	jsr	spritedma
+	jsr	readinput
+	jsr parseboxinput
+
+	lda ok_button
+	cmp #1
+	beq +
+
+	lda cancel_button
+	cmp #1
+	beq +
+
+	ldsty	$00,PPUSCROLL	;;reset scroll to 0,0
+	ldsty	$00,PPUSCROLL
+	ldsty	$18,PPUMASK		;;enable bg/sprites
+
+	jmp	boxloop2
+
++	ldsty	$00,PPUMASK		;;disable bg/sprites
+	jsr		drawpage
+	rts
+
+updatefirmware:
+	lda #0
+	sta ok_button
+	sta cancel_button
+	jsr drawbox
+
+	ldsty	>(box_updatefirmware),$53	;;high byte of source address
+	ldsty	<(box_updatefirmware),$52	;;low byte of source address
+
+	jsr copyboxstring
+
+boxloop:
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	inc	sleeping
+-	lda	sleeping
+	bne	-
+ 
+	jsr	spritedma
+	jsr	readinput
+	jsr parseboxinput
+
+	lda ok_button
+	cmp #1
+	beq do_update_firmware
+
+	lda cancel_button
+	cmp #1
+	beq +
+
+	ldsty	$00,PPUSCROLL	;;reset scroll to 0,0
+	ldsty	$00,PPUSCROLL
+	ldsty	$18,PPUMASK		;;enable bg/sprites
+
+	jmp	boxloop
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
++	ldsty	$00,PPUMASK		;;disable bg/sprites
+
+	jsr		drawpage
+
+	rts
+
+do_update_firmware:
+
+	lda $0101				;;save irq handler action
+	pha
+
+	lda #2					;;error retry count
+	sta $05
+
+	jsr STARTXFER
+	lda #$DC 				;;block "type"
+	jsr WRITEBLOCKTYPE
+
+	;;setup to copy 12 byte filename
+	lda #12
+	sta $80
+
+	;;filename write loop
+-	lda #0
+	jsr XFERBYTE			;;write it out
+	dec $80
+	bne -
+
+	jsr ENDBLOCKWRITE
+
+	pla 					;;restore irq handler action
+	sta $0101
+	jmp reboot
+	rts
+
+drawbox:
+
+	ldsty	$00,PPUMASK		;;disable bg/sprites
+
+	ldy	PPUSTATUS			;;reset the toggle
+	ldsty	$21,PPUADDR		;;setup destination ppu address
+	ldsty	$04,PPUADDR
+
+	ldsty	>(box),$51	;;high byte of source address
+	ldsty	<(box),$50	;;low byte of source address
+
+	lda 	#7
+	sta 	$54
+copybox:
+	ldy 	#0
+	ldx		#24
+
+	;;copy part of the box
+-	lda 	($50),y
+	sta 	PPUDATA
+	iny
+	dex
+	bne 	-
+
+	;;move to beginning of next column used for box
+	ldx 	#8
+-	lda 	PPUDATA
+	dex
+	bne 	-
+
+	;;increment source address
+	clc
+	lda 	$50
+	adc		#24
+	sta 	$50
+	bcc 	+
+	inc 	$51
+
+	;;decrement loop counter
++	dec 	$54
+	bne 	copybox
+
+	rts
+
+copyboxstring:
+
+	;;setup destination ppu address
+	ldsty	$21,PPUADDR
+	ldsty	$25,PPUADDR
+
+	;;starting offset in string data
+	ldy	#0
+
+	;;number of charactrers in a line
+	ldx	#23
+
+	;;copy string until chars is reached or a 0 is encountered
+-	lda	($52),y
+
+copymore:
+	dex
+	iny
+	cmp	#0
+	beq	+
+	sta	PPUDATA
+	bne	-
+
+	;;fill remaining with space character
++	lda	#32
+-	sta	PPUDATA
+	dex
+	cpx	#0
+	bne	-
+
+	;;go to next line
+	ldx 	#10
+-	lda 	PPUDATA
+	dex
+	bne 	-
+
+	lda 	($52),y
+	cmp 	#$FF
+	beq 	+
+	ldx		#23
+	jmp 	copymore
+
++	rts
+
+;; 168 bytes
+box_top:
+box:
+	.db $11,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$12
+box_line:
+	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
+	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
+	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
+	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
+	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
+box_bottom:
+	.db $15,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$16
+
+box_updatefirmware:
+	.db "Update firmware?",0
+	.db 0
+	.db 0
+	.db "          A: Continue",0
+	.db "          B: Cancel",0
+	.db $ff
+
+box_status:
+	.db "Firmware updated to",0
+	.db "build number: "
+box_status_blank:
+	.db 0,0,0,0,0,0
+	.db 0
+	.db 0
+	.db "          A: Continue",0
+	.db $ff
 
 diskid:
 	.db	$FF,$FF,$FF,$FF,$FF,$FF,0,0,0,0
@@ -537,4 +656,171 @@ diskid:
 ;;identification string followed by version
 ident:
 	.db	"]|<=--LOADER.FDS--=>|[",0
-	.db	010
+	.db	030
+
+;;calculate number of pages
+calcnumpages:
+	;;divide number of disks in the list by the number of disks per page
+	lda 	DISKLIST
+	sta 	dividend
+	lda 	DISKLIST+1
+	sta 	dividend+1
+
+	;;disks per page
+	lda 	#23
+	sta 	divisor
+	lda 	#0
+	sta 	divisor+1
+
+	;;perform division, result is stored in dividend
+	jsr 	div16
+	lda 	dividend
+	sta 	pagecount
+	rts
+
+;Hex to Decimal (0-65535) conversion
+;by Omegamatrix
+;
+;HexToDec99     ; 37 cycles
+;HexToDec255    ; 52-57 cycles
+;HexToDec999    ; 72-77 cycles
+;HexToDec65535  ; 178-186 cycles
+
+;temp         = decOnes
+;hexHigh      = temp2
+;hexLow       = temp3
+
+.equ ASCII_OFFSET $30
+
+.define temp 		$40
+.define hexLow 		$41
+.define hexHigh		$42
+
+Mod100Tab:
+    .db 0,56,12,68 ;56+12
+
+ShiftedBcdTab:
+    .db $00,$01,$02,$03,$04,$08,$09,$0A,$0B,$0C
+    .db $10,$11,$12,$13,$14,$18,$19,$1A,$1B,$1C
+    .db $20,$21,$22,$23,$24,$28,$29,$2A,$2B,$2C
+    .db $30,$31,$32,$33,$34,$38,$39,$3A,$3B,$3C
+    .db $40,$41,$42,$43,$44,$48,$49,$4A,$4B,$4C
+
+HexToDec65535:; SUBROUTINE
+    sta    hexHigh               ;3  @9
+    stx    hexLow                ;3  @12
+    tax                          ;2  @14
+    lsr                          ;2  @16
+    lsr                          ;2  @18   integer divide 1024 (result 0-63)
+
+    cpx    #$A7                  ;2  @20   account for overflow of multiplying 24 from 43,000 ($A7F8) onward,
+    adc    #1                    ;2  @22   we can just round it to $A700, and the divide by 1024 is fine...
+
+    ;at this point we have a number 1-65 that we have to times by 24,
+    ;add to original sum, and Mod 1024 to get a remainder 0-999
+
+
+    sta    temp                  ;3  @25
+    asl                          ;2  @27
+    adc    temp                  ;3  @30  x3
+    tay                          ;2  @32
+    lsr                          ;2  @34
+    lsr                          ;2  @36
+    lsr                          ;2  @38
+    lsr                          ;2  @40
+    lsr                          ;2  @42
+    tax                          ;2  @44
+    tya                          ;2  @46
+    asl                          ;2  @48
+    asl                          ;2  @50
+    asl                          ;2  @52
+    clc                          ;2  @54
+    adc    hexLow                ;3  @57
+    sta    hexLow                ;3  @60
+    txa                          ;2  @62
+    adc    hexHigh               ;3  @65
+    sta    hexHigh               ;3  @68
+    ror                          ;2  @70
+    lsr                          ;2  @72
+    tay                          ;2  @74    integer divide 1,000 (result 0-65)
+
+    lsr                          ;2  @76    split the 1,000 and 10,000 digit
+    tax                          ;2  @78
+    lda.w    ShiftedBcdTab,X       ;4  @82
+    tax                          ;2  @84
+    rol                          ;2  @86
+    and    #$0F                  ;2  @88
+ora    #ASCII_OFFSET
+    sta    decThousands          ;3  @91
+    txa                          ;2  @93
+    lsr                          ;2  @95
+    lsr                          ;2  @97
+    lsr                          ;2  @99
+ora    #ASCII_OFFSET
+    sta    decTenThousands       ;3  @102
+
+    lda    hexLow                ;3  @105
+    cpy    temp                  ;3  @108
+    bmi    doSubtract           ;2³ @110/111
+    beq    useZero               ;2³ @112/113
+    adc    #23 + 24              ;2  @114
+doSubtract:
+    sbc    #23                   ;2  @116
+    sta    hexLow                ;3  @119
+useZero:
+    lda    hexHigh               ;3  @122
+    sbc    #0                    ;2  @124
+
+Start100s:
+    and    #$03                  ;2  @126
+    tax                          ;2  @128   0,1,2,3
+    cmp    #2                    ;2  @130
+    rol                          ;2  @132   0,2,5,7
+ora    #ASCII_OFFSET
+    tay                          ;2  @134   Y = Hundreds digit
+
+    lda    hexLow                ;3  @137
+    adc.w    Mod100Tab,X           ;4  @141    adding remainder of 256, 512, and 256+512 (all mod 100)
+    bcs    doSub200             ;2³ @143/144
+
+try200:
+    cmp    #200                  ;2  @145
+    bcc    try100               ;2³ @147/148
+doSub200:
+    iny                          ;2  @149
+    iny                          ;2  @151
+    sbc    #200                  ;2  @153
+try100:
+    cmp    #100                  ;2  @155
+    bcc    HexToDec99            ;2³ @157/158
+    iny                          ;2  @159
+    sbc    #100                  ;2  @161
+
+HexToDec99:; SUBROUTINE
+    lsr                          ;2  @163
+    tax                          ;2  @165
+    lda.w    ShiftedBcdTab,X       ;4  @169
+    tax                          ;2  @171
+    rol                          ;2  @173
+    and    #$0F                  ;2  @175
+ora    #ASCII_OFFSET
+    sta    decOnes               ;3  @178
+    txa                          ;2  @180
+    lsr                          ;2  @182
+    lsr                          ;2  @184
+    lsr                          ;2  @186
+ora    #ASCII_OFFSET
+    rts                          ;6  @192   A = tens digit
+
+HexToDec255:; SUBROUTINE
+    ldy    #0                    ;2  @8
+    beq    try200               ;3  @11    always branch
+
+HexToDec999:; SUBROUTINE
+    stx    hexLow                ;3  @9
+    jmp    Start100s             ;3  @12
+
+.include "menu-draw.s"
+.include "menu-input.s"
+.include "math.s"
+

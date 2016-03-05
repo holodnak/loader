@@ -8,7 +8,7 @@ OBJECTS = $(patsubst %.s,%.o,$(SOURCES))
 AS = wla-6502
 LD = wlalink
 
-ASFLAGS =
+ASFLAGS = v
 LDFLAGS = -d 
 
 all: $(TARGET)

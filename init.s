@@ -22,6 +22,10 @@ reset:
 	sei
 	cld
 
+	;;setup stack
+	ldx	#$FF
+	txs
+
 	;;init ppu variables and registers
 	lda #$10
 	sta $FF
@@ -72,10 +76,47 @@ reset:
 	lda #$83
 	sta $4023
 
+	ldx		#0
+	txa
+-	sta		$000,x			;;clear ram
+	sta		$100,x
+	sta		$200,x
+	sta		$300,x
+	sta		$400,x
+	sta		$500,x
+	sta		$600,x
+	sta		$700,x
+	inx
+	bne	-
+
 	;;load boot files
 	jsr	LOADFILES
 	.dw	diskid
 	.dw	loadlist
+
+	;;continue booting
+	sei
+	ldx	#$FF
+	txs
+	lda	#$10
+	sta	$2000
+	lda	#$06
+	sta	$2001
+	lda	$FA
+	ora	#$08
+	sta	$4025
+	sta	$FA
+	lda	$0102
+	ldx	$0103
+	cmp	#$35
+	bne	main
+	cpx	#$53
+	bne	main
+	lda	#$00
+	sta	$0102
+	jmp	($FFFC)
+
+main:
 	jmp	($DFFC)
 
 diskid:

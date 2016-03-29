@@ -57,11 +57,7 @@ parseinput:
 ;;parse pad data
 
 	lda	PADDATA2		;;load controller data
-	cmp #$38
-	bne +
-	jmp	updatefirmware	;;update the firmware
-
-+	cmp #$34
+	cmp #$34
 	bne +
 	jmp	buildbox		;;show firmware build
 

@@ -29,25 +29,6 @@ skip:
 	bne divloop	
 	rts
 
-;;result stored in A=hi, X=lo
-;mul16:
-;	lda #$00
-;	ldx #$08
-;	clc
-;-	bcc +
-;	clc
-;	adc num2
-;+	ror
-;	ror num1
-;	dex
-;	bpl -
-;	ldx num1
-;	rts
-
-;multiplier = $f7 
-;multiplicand = $f9 
-;product = $fb 
-
 mul16:
 	lda #$00
 	sta res+2 ; clear upper bits of product
@@ -74,11 +55,6 @@ rotate_r:
 	lda res+1
 	ldx res+0
 	rts
-
-
-
-
-
 
 ; 16-bit addition and subtraction by FMan/Tropyx
 sub16:

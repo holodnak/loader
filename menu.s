@@ -161,7 +161,7 @@ drawpage:
 
 	sta num1+1
 	stx num1+0
-	lda #40
+	lda #32
 	sta num2+0
 	lda #0
 	sta num2+1
@@ -229,7 +229,7 @@ copydone:
 inclistaddr:
 	clc
 	lda listaddr+0
-	adc #40
+	adc #32
 	sta listaddr+0
 	bcc +
 	inc listaddr+1
@@ -269,7 +269,7 @@ ppuwait:
 ;;copy string from ($80) to ppu memory
 copystring:
 	ldx	#28
-	ldy	#12
+	ldy	#2
 -	lda	(listaddr),y
 	dex
 	iny
@@ -292,7 +292,7 @@ copystring:
 startdisk:
 	;;setup pointer to disk list data
 	ldsty	>(DISKLIST+0),listaddr+1	;;high byte of source address
-	ldsty	<(DISKLIST+40),listaddr+0	;;low byte of source address
+	ldsty	<(DISKLIST+32),listaddr+0	;;low byte of source address
 
 	;;increment the address pointer enough to get to the selected disk
 decloop:
@@ -324,21 +324,23 @@ writefilename:
 	lda #2					;;error retry count
 	sta $05
 
+	ldy	#0
+
+	lda	(listaddr),y
+	sta diskblock+0
+	inc listaddr
+
+	lda (listaddr),y
+	sta diskblock+1
+
 	jsr STARTXFER
 	lda #$DB 				;;block "type"
 	jsr WRITEBLOCKTYPE
 
-	;;setup to copy 12 byte filename
-	ldy #0
-	lda #12
-	sta $80
-
-	;;filename write loop
--	lda (listaddr),y
+	lda diskblock+0
 	jsr XFERBYTE			;;write it out
-	iny
-	dec $80
-	bne -
+	lda diskblock+1
+	jsr XFERBYTE			;;write it out
 
 	jsr ENDBLOCKWRITE
 
@@ -464,17 +466,6 @@ boxloop2:
 	jsr		drawpage
 	rts
 
-updatefirmware:
-	lda #0
-	sta ok_button
-	sta cancel_button
-	jsr drawbox
-
-	ldsty	>(box_updatefirmware),$53	;;high byte of source address
-	ldsty	<(box_updatefirmware),$52	;;low byte of source address
-
-	jsr copyboxstring
-
 boxloop:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 	inc	sleeping
@@ -487,7 +478,7 @@ boxloop:
 
 	lda ok_button
 	cmp #1
-	beq do_update_firmware
+;	beq do_update_firmware
 
 	lda cancel_button
 	cmp #1
@@ -504,35 +495,6 @@ boxloop:
 
 	jsr		drawpage
 
-	rts
-
-do_update_firmware:
-
-	lda $0101				;;save irq handler action
-	pha
-
-	lda #2					;;error retry count
-	sta $05
-
-	jsr STARTXFER
-	lda #$DC 				;;block "type"
-	jsr WRITEBLOCKTYPE
-
-	;;setup to copy 12 byte filename
-	lda #12
-	sta $80
-
-	;;filename write loop
--	lda #0
-	jsr XFERBYTE			;;write it out
-	dec $80
-	bne -
-
-	jsr ENDBLOCKWRITE
-
-	pla 					;;restore irq handler action
-	sta $0101
-	jmp reboot
 	rts
 
 drawbox:
@@ -635,14 +597,6 @@ box_line:
 	.db $13,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$10, $10,$10,$10,$13
 box_bottom:
 	.db $15,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$14, $14,$14,$14,$16
-
-box_updatefirmware:
-	.db "Update firmware?",0
-	.db 0
-	.db 0
-	.db "A: Continue",0
-	.db "B: Cancel",0
-	.db $ff
 
 box_status:
 	.db "Firmware is now at",0
